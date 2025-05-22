@@ -1,8 +1,8 @@
 
 // --- CONFIGURATION CONSTANTS ---
 const CONFIG = {
-    GRID_ROWS: 6,
-    GRID_COLS: 8,
+    GRID_ROWS: 8,
+    GRID_COLS: 6,
     TOP_UI_SPACE: 40,
     BOTTOM_UI_SPACE: 10,
     HAND_CARD_MARGIN: 10,
@@ -14,6 +14,7 @@ const CONFIG = {
     INITIAL_HAND_SIZE: 3,
     MAX_MOVES_PER_TURN: 3,
     MAX_ATTACKS_PER_TURN: 3,
+    BATTLE_RESULT_DISPLAY_TIME: 360, // Animation frames to show battle results (3 seconds at 60fps)
 };
 
 // --- GLOBAL GAME VARIABLES (Derived from CONFIG or P5) ---
@@ -33,6 +34,7 @@ let gameState = {
     winnerMessage: "",
     attackAnimations: [],
     currentDiceRollResult: "",
+    battleResultDisplayTimer: 0,
     selectedUnit: null,
     selectedCardForSummoning: null,
     potentialMoveCells: [],
@@ -48,7 +50,7 @@ class CardActionMenuManager {
     constructor() {
         this.active = false; this.card = null; this.cardIndexInHand = -1;
         this.playButtonRect = { x:0,y:0,w:CONFIG.CARD_MENU_BUTTON_WIDTH,h:CONFIG.CARD_MENU_BUTTON_HEIGHT,text:"Play"};
-        this.scrapButtonRect = { x:0,y:0,w:CONFIG.CARD_MENU_BUTTON_WIDTH,h:CONFIG.CARD_MENU_BUTTON_HEIGHT,text:"Scrap (1M)"};
+        this.scrapButtonRect = { x:0,y:0,w:CONFIG.CARD_MENU_BUTTON_WIDTH,h:CONFIG.CARD_MENU_BUTTON_HEIGHT,text:"Scrap"};
     }
     open(card, indexInHand, cardDisplayX, cardDisplayY, cardDisplayWidth, cardDisplayHeight) {
         this.active = true; this.card = card; this.cardIndexInHand = indexInHand;
@@ -224,10 +226,11 @@ class Unit {
   attack(targetUnit){
     let hits=0;let dR=[];for(let i=0;i<this.attackValue;i++){let r=floor(random(1,7));dR.push(r);if(r>=3)hits++}
     gameState.currentDiceRollResult=`${this.name}(${this.isPlayer1?'P1':'P2'}) attacks ${targetUnit.name}(${targetUnit.isPlayer1?'P1':'P2'})! Rolls:[${dR.join(',')}] -> ${hits} Hits.`;
+    gameState.battleResultDisplayTimer = CONFIG.BATTLE_RESULT_DISPLAY_TIME;
     targetUnit.takeDamage(hits);
     if(targetUnit.currentLifePoints<=0&&!targetUnit.isDestroyed){let mG=Math.floor(targetUnit.maxLifePoints/2);if(this.isPlayer1)gameState.player1Mana+=mG;else gameState.player2Mana+=mG;targetUnit.isDestroyed=true}
     this.hasAttackedThisTurn=true;gameState.attacksMadeThisTurn++;
-    let aP=this.getPixelPos();let tP=targetUnit.getPixelPos();gameState.attackAnimations.push({attackerPos:aP,targetPos:tP,timer:60,duration:60});
+    let aP=this.getPixelPos();let tP=targetUnit.getPixelPos();gameState.attackAnimations.push({attackerPos:aP,targetPos:tP,timer:CONFIG.BATTLE_RESULT_DISPLAY_TIME/3,duration:CONFIG.BATTLE_RESULT_DISPLAY_TIME/3});
     checkGameEndCondition();return true;
   }
 }
@@ -239,13 +242,89 @@ function initializeManaAndHands(){gameState.player1Mana=CONFIG.STARTING_MANA;gam
 function setupGame(){populateAllAvailableCards();initializeUnits();initializeManaAndHands();gameState.currentPlayerIsP1=true;gameState.movesMadeThisTurn=0;gameState.attacksMadeThisTurn=0;gameState.currentDiceRollResult="";gameState.gameOver=false;gameState.winnerMessage="";gameState.selectedUnit=null;gameState.selectedCardForSummoning=null;gameState.potentialMoveCells=[];gameState.potentialAttackCells=[];gameState.potentialSummonCells=[];gameState.attackAnimations=[];cardActionMenu.close();actionButtonRect.text="End Turn";}
 function resetGame(){setupGame();}
 
-function setup(){createCanvas(800,700);colorMode(HSB,360,100,100,100);cellWidth=width/CONFIG.GRID_COLS;cellHeight=(height-CONFIG.TOP_UI_SPACE-CONFIG.BOTTOM_UI_SPACE-CONFIG.HAND_CARD_HEIGHT-CONFIG.HAND_CARD_MARGIN)/CONFIG.GRID_ROWS;actionButtonRect={x:width-110,y:height-40,w:100,h:30,text:"End Turn"};setupGame();}
+function setup(){createCanvas(800,920);colorMode(HSB,360,100,100,100);cellWidth=width/CONFIG.GRID_COLS;cellHeight=(height-CONFIG.TOP_UI_SPACE-CONFIG.BOTTOM_UI_SPACE-CONFIG.HAND_CARD_HEIGHT-CONFIG.HAND_CARD_MARGIN)/CONFIG.GRID_ROWS;actionButtonRect={x:width-110,y:height-40,w:100,h:30,text:"End Turn"};setupGame();}
 
 function drawGrid(){stroke(0,0,70);strokeWeight(1);let gridBottomY=height-CONFIG.HAND_CARD_HEIGHT-CONFIG.HAND_CARD_MARGIN-CONFIG.BOTTOM_UI_SPACE;for(let r=0;r<=CONFIG.GRID_ROWS;r++)line(0,CONFIG.TOP_UI_SPACE+r*cellHeight,width,CONFIG.TOP_UI_SPACE+r*cellHeight);for(let c=0;c<=CONFIG.GRID_COLS;c++)line(c*cellWidth,CONFIG.TOP_UI_SPACE,c*cellWidth,gridBottomY);stroke(0,0,50);strokeWeight(2);line(0,CONFIG.TOP_UI_SPACE+(gridBottomY-CONFIG.TOP_UI_SPACE)/2,width,CONFIG.TOP_UI_SPACE+(gridBottomY-CONFIG.TOP_UI_SPACE)/2);}
 function drawHighlights(){if(gameState.gameOver)return;noStroke();fill(200,60,100,30);for(let cell of gameState.potentialMoveCells)rect(cell.col*cellWidth,CONFIG.TOP_UI_SPACE+cell.row*cellHeight,cellWidth,cellHeight);fill(120,70,90,40);for(let cell of gameState.potentialAttackCells)rect(cell.col*cellWidth,CONFIG.TOP_UI_SPACE+cell.row*cellHeight,cellWidth,cellHeight);fill(60,100,100,40);for(let cell of gameState.potentialSummonCells)rect(cell.col*cellWidth,CONFIG.TOP_UI_SPACE+cell.row*cellHeight,cellWidth,cellHeight);}
 function drawUnits(){for(let unit of gameState.units)unit.display();}
-function drawAttackAnimations(){for(let i=gameState.attackAnimations.length-1;i>=0;i--){let anim=gameState.attackAnimations[i];anim.timer--;if(anim.timer<=0){gameState.attackAnimations.splice(i,1);if(gameState.attackAnimations.length===0)gameState.currentDiceRollResult=""}else{push();let alpha=map(anim.timer,anim.duration,0,100,0);stroke(0,100,100,alpha);strokeWeight(3);line(anim.attackerPos.x,anim.attackerPos.y,anim.targetPos.x,anim.targetPos.y);pop()}}}
-function drawGameUI(){let topUiY=15;fill(0);textSize(14);if(!gameState.gameOver){textAlign(LEFT,TOP);text(`Player ${gameState.currentPlayerIsP1?'1 (Blue)':'2 (Red)'}'s Turn. M: ${gameState.movesMadeThisTurn}/${CONFIG.MAX_MOVES_PER_TURN}. A: ${gameState.attacksMadeThisTurn}/${CONFIG.MAX_ATTACKS_PER_TURN}`,10,topUiY);text(`Mana: ${gameState.currentPlayerIsP1?gameState.player1Mana:gameState.player2Mana}`,width/2-150,topUiY);textAlign(CENTER,TOP);if(gameState.currentDiceRollResult)text(gameState.currentDiceRollResult,width/2,topUiY+20);}else{textAlign(CENTER,TOP);textSize(24);fill(0,80,100);text(gameState.winnerMessage,width/2,topUiY+10);}fill(gameState.gameOver?color(120,70,80):color(10,30,80));rect(actionButtonRect.x,actionButtonRect.y,actionButtonRect.w,actionButtonRect.h,5);fill(0);textAlign(CENTER,CENTER);textSize(14);text(actionButtonRect.text,actionButtonRect.x+actionButtonRect.w/2,actionButtonRect.y+actionButtonRect.h/2);}
+function drawAttackAnimations(){
+  // Decrement battle result display timer if active
+  if(gameState.battleResultDisplayTimer > 0) {
+    gameState.battleResultDisplayTimer--;
+    if(gameState.battleResultDisplayTimer <= 0) {
+      gameState.currentDiceRollResult = "";
+    }
+  }
+  
+  // Handle attack animations
+  for(let i=gameState.attackAnimations.length-1; i>=0; i--) {
+    let anim=gameState.attackAnimations[i];
+    anim.timer--;
+    if(anim.timer<=0) {
+      gameState.attackAnimations.splice(i,1);
+    } else {
+      push();
+      let alpha=map(anim.timer,anim.duration,0,100,0);
+      stroke(0,100,100,alpha);
+      strokeWeight(3);
+      line(anim.attackerPos.x,anim.attackerPos.y,anim.targetPos.x,anim.targetPos.y);
+      pop();
+    }
+  }
+}
+function drawGameUI(){
+  let topUiY=15;
+  fill(0);
+  textSize(14);
+  
+  if(!gameState.gameOver){
+    // Draw player turn info on the left
+    textAlign(LEFT,TOP);
+    text(`Player ${gameState.currentPlayerIsP1?'1 (Blue)':'2 (Red)'}'s Turn. M: ${gameState.movesMadeThisTurn}/${CONFIG.MAX_MOVES_PER_TURN}. A: ${gameState.attacksMadeThisTurn}/${CONFIG.MAX_ATTACKS_PER_TURN}`,10,topUiY);
+    text(`Mana: ${gameState.currentPlayerIsP1?gameState.player1Mana:gameState.player2Mana}`,width/2-150,topUiY);
+    
+    // Draw battle results in top right with a background
+    if(gameState.currentDiceRollResult && gameState.battleResultDisplayTimer > 0){
+      let resultText = gameState.currentDiceRollResult;
+      // No need to set text alignment here as we'll set it just before drawing the text
+      
+      // Calculate the box dimensions for the battle result display
+      let textWidth = min(width * 0.4, 300);
+      let textHeight = 40;
+      let rightMargin = 20;
+      let boxX = width - textWidth - rightMargin;
+      let boxY = topUiY - 5;
+      
+      // Draw background for battle result
+      push();
+      fill(0, 0, 0, 15);
+      stroke(0, 0, 0, 30);
+      rect(boxX, boxY, textWidth, textHeight, 5);
+      
+      // Draw text with a subtle fade out as timer decreases
+      let alpha = map(gameState.battleResultDisplayTimer, 0, CONFIG.BATTLE_RESULT_DISPLAY_TIME, 0, 100);
+      fill(0, 0, 0, alpha);
+      textSize(12);
+      textAlign(LEFT, TOP);
+      text(resultText, boxX + 10, boxY + 5, textWidth - 20, textHeight - 10);
+      pop();
+    }
+  } else {
+    // Game over message
+    textAlign(CENTER,TOP);
+    textSize(24);
+    fill(0,80,100);
+    text(gameState.winnerMessage,width/2,topUiY+10);
+  }
+  
+  // Draw action button
+  fill(gameState.gameOver?color(120,70,80):color(10,30,80));
+  rect(actionButtonRect.x,actionButtonRect.y,actionButtonRect.w,actionButtonRect.h,5);
+  fill(0);
+  textAlign(CENTER,CENTER);
+  textSize(14);
+  text(actionButtonRect.text,actionButtonRect.x+actionButtonRect.w/2,actionButtonRect.y+actionButtonRect.h/2);
+}
 function drawPlayerHand(){if(gameState.gameOver)return;let currentHand=gameState.currentPlayerIsP1?gameState.player1Hand:gameState.player2Hand;let handStartX=20;let handDisplayBaseY=height-CONFIG.HAND_CARD_HEIGHT-5;for(let i=0;i<currentHand.length;i++){let card=currentHand[i];card.displayX=handStartX+i*(CONFIG.HAND_CARD_WIDTH+10);card.displayY=handDisplayBaseY;card.displayWidth=CONFIG.HAND_CARD_WIDTH;card.displayHeight=CONFIG.HAND_CARD_HEIGHT;push();translate(card.displayX,card.displayY);strokeWeight(2);if(cardActionMenu.active&&cardActionMenu.card&&cardActionMenu.card.id===card.id)stroke(60,100,100);else if(gameState.selectedCardForSummoning&&gameState.selectedCardForSummoning.id===card.id)stroke(60,80,100);else stroke(0,0,20);let currentMana=gameState.currentPlayerIsP1?gameState.player1Mana:gameState.player2Mana;if(card.summonCost>currentMana)fill(0,0,50,70);else fill(45,20,95);rect(0,0,card.displayWidth,card.displayHeight,5);fill(0);noStroke();textAlign(CENTER,TOP);textSize(12);text(card.unitName,card.displayWidth/2,10);textSize(10);text(`Cost: ${card.summonCost}`,card.displayWidth/2,card.displayHeight-25);text(`A:${card.attackValue} L:${card.lifePoints}`,card.displayWidth/2,card.displayHeight-12);pop();}}
 
 function draw(){background(60,10,95);gameState.units=gameState.units.filter(unit=>!unit.isDestroyed);drawGrid();if(!gameState.gameOver){for(let unit of gameState.units)unit.isHovered=unit.isMouseOver(mouseX,mouseY);drawHighlights();}drawUnits();drawAttackAnimations();drawGameUI();drawPlayerHand();cardActionMenu.draw();}
@@ -259,7 +338,19 @@ function selectUnitForAction(unit){deselectAllSelections();gameState.selectedUni
 function refreshPotentialUnitActions(){if(!gameState.selectedUnit)return;gameState.potentialMoveCells=gameState.selectedUnit.getValidMoveCells();gameState.potentialAttackCells=gameState.selectedUnit.getValidAttackCells();}
 function calculatePotentialSummonCells(){gameState.potentialSummonCells=[];if(!gameState.selectedCardForSummoning)return;let summonerUnit=gameState.units.find(u=>u.isSummoner&&u.isPlayer1===gameState.currentPlayerIsP1&&u.currentLifePoints>0);if(!summonerUnit)return;const adjacents=[[-1,0],[1,0],[0,-1],[0,1]];for(let adj of adjacents){let r=summonerUnit.row+adj[0];let c=summonerUnit.col+adj[1];if(isCellOnBoard(r,c)&&!getUnitAt(r,c))gameState.potentialSummonCells.push({row:r,col:c});}}
 function checkGameEndCondition(){let p1S=false;let p2S=false;for(let u of gameState.units){if(u.isSummoner){if(u.isPlayer1&&u.currentLifePoints>0)p1S=true;if(!u.isPlayer1&&u.currentLifePoints>0)p2S=true;}}if(!p1S){gameState.gameOver=true;gameState.winnerMessage="Game Over! Player 2 (Red) Wins!";actionButtonRect.text="Restart Game";deselectAllSelections();}else if(!p2S){gameState.gameOver=true;gameState.winnerMessage="Game Over! Player 1 (Blue) Wins!";actionButtonRect.text="Restart Game";deselectAllSelections();}}
-function endTurn(){gameState.currentPlayerIsP1=!gameState.currentPlayerIsP1;gameState.movesMadeThisTurn=0;gameState.attacksMadeThisTurn=0;gameState.currentDiceRollResult="";for(let unit of gameState.units){unit.hasMovedThisTurn=false;unit.hasAttackedThisTurn=false;}drawNewCardForPlayer(gameState.currentPlayerIsP1);deselectAllSelections();}
+function endTurn(){
+  gameState.currentPlayerIsP1=!gameState.currentPlayerIsP1;
+  gameState.movesMadeThisTurn=0;
+  gameState.attacksMadeThisTurn=0;
+  gameState.currentDiceRollResult="";
+  gameState.battleResultDisplayTimer=0;
+  for(let unit of gameState.units){
+    unit.hasMovedThisTurn=false;
+    unit.hasAttackedThisTurn=false;
+  }
+  drawNewCardForPlayer(gameState.currentPlayerIsP1);
+  deselectAllSelections();
+}
 
 function isMouseOverRect(mx,my,rect){return mx>rect.x&&mx<rect.x+rect.w&&my>rect.y&&my<rect.y+rect.h;}
 function isMouseOverAnyCardInHand(mx,my){let hand=gameState.currentPlayerIsP1?gameState.player1Hand:gameState.player2Hand;for(let card of hand){if(card.isMouseOver(mx,my))return true;}return false;}
