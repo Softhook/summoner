@@ -54,6 +54,9 @@ let gameState = {
     potentialAttackCells: [],
     potentialSummonCells: [],
     ALL_AVAILABLE_CARDS: [],
+    activeEvents: [],          // Active event cards in play
+    selectedEventCard: null,   // Currently selected event card for targeting
+    potentialEventTargets: []  // Grid cells or units eligible for event effect
 };
 
 // --- UI ELEMENTS / MANAGERS ---
@@ -145,29 +148,44 @@ class CardActionMenuManager {
 
 function playEventCard(card) {
     console.log(`Playing event card: ${card.unitName}`);
-    // Placeholder for actual event card logic
-    // Based on card.specialAbility.type, trigger different effects
-
-    // Example structure for event effects:
-    // switch (card.specialAbility.type) {
-    //     case "BLINDING_FLARE_EFFECT":
-    //         // Implement Blinding Flare logic
-    //         break;
-    //     case "BURN_EFFECT":
-    //         // Implement Burn logic
-    //         break;
-    //     case "DIVINE_RETRIBUTION_EFFECT":
-    //         // Implement Divine Retribution logic
-    //         break;
-    //     // Add cases for other event cards
-    // }
-
-    // For now, just a log message
+    // Deduct mana and remove from hand handled by caller
+    // Handle different event types
+    switch (card.specialAbility.type) {
+        case "BURN_EFFECT":
+            // Prepare for target selection in Move phase
+            gameState.selectedEventCard = card;
+            calculateEventTargets(card);
+            break;
+        case "BLINDING_FLARE_EFFECT":
+        case "DIVINE_RETRIBUTION_EFFECT":
+        case "SPIRIT_OF_THE_PHOENIX":
+            // Active events: remain in play until end of next turn
+            gameState.activeEvents.push(card);
+            break;
+        default:
+            console.warn(`No implementation for event type: ${card.specialAbility.type}`);
+    }
+    // Show feedback
     gameState.currentDiceRollResult = `Event: ${card.unitName} played.`;
     gameState.battleResultDisplayTimer = CONFIG.BATTLE_RESULT_DISPLAY_TIME;
+}
 
-    // Event cards are typically discarded after playing, unless they are "ACTIVE"
-    // This will be handled by the calling function (handleMousePress in CardActionMenuManager)
+// Calculate valid targets for event cards
+function calculateEventTargets(card) {
+    gameState.potentialEventTargets = [];
+    const summoner = gameState.units.find(u => u.isSummoner && u.isPlayer1 === gameState.currentPlayerIsP1);
+    if (!summoner) return;
+    if (card.specialAbility.type === "BURN_EFFECT") {
+        // Cells within 2 spaces of summoner containing a unit that is not a summoner
+        for (let unit of gameState.units) {
+            if (unit.isPlayer1 === gameState.currentPlayerIsP1 && !unit.isSummoner) {
+                const dist = abs(unit.row - summoner.row) + abs(unit.col - summoner.col);
+                if (dist <= 2) {
+                    gameState.potentialEventTargets.push({ row: unit.row, col: unit.col });
+                }
+            }
+        }
+    }
 }
 
 let cardActionMenu = new CardActionMenuManager();
@@ -559,14 +577,35 @@ function populateAllAvailableCards(){
     new Card("Fire Drake", "Brute", 4, 10, 'ranged', 8, false, { type: "FIRE_DRAKE_ABILITIES", protector: true, fire_breath: true }),
     new Card("Holleas", "Archer", 3, 7, 'ranged', 5, false, { type: "HOLLEAS_ABILITIES", fiery_summon: true, ignite: true }),
     // Phoenix Elves Event Cards
-    new Card("Blinding Flare", "Event", null, null, null, 2, false, { type: "BLINDING_FLARE_EFFECT" }),
-    new Card("Burn", "Event", null, null, null, 1, false, { type: "BURN_EFFECT" }),
-    new Card("Divine Retribution", "Event", null, null, null, 3, false, { type: "DIVINE_RETRIBUTUTION_EFFECT" })
+    new Card("Blinding Flare", "Event", null, null, null, 2, false, {
+      type: "BLINDING_FLARE_EFFECT",
+      phase: PHASES.MAGIC,
+      active: true,
+      text: "When your summoner or a friendly unit adjacent to your summoner is being attacked, add 1 damage to it for each shield rolled, instead of each sword or bow rolled."
+    }),
+    new Card("Burn", "Event", null, null, null, 1, false, {
+      type: "BURN_EFFECT",
+      phase: PHASES.MOVE,
+      text: "Target a common or champion within 2 spaces of your summoner. Add 2 damage to the target."
+    }),
+    new Card("Divine Retribution", "Event", null, null, null, 3, false, {
+      type: "DIVINE_RETRIBUTUTION_EFFECT",
+      phase: PHASES.MAGIC,
+      active: true,
+      text: "Your summoner gains aura of the Phoenix: After this unit or a friendly unit within 3 spaces is attacked by an enemy unit, add 1 damage to that enemy."
+    }),
+    // Phoenix Elves Epic Event
+    new Card("Spirit of the Phoenix", "Event", null, null, null, 0, false, {
+      type: "SPIRIT_OF_THE_PHOENIX",
+      phase: PHASES.SUMMON,
+      active: true,
+      text: "When the ability of a friendly unit adds damage to an enemy unit without attacking it, that ability adds 1 more damage."
+    })
   ];
   
   // Define Tundra Orcs cards (2nd Edition)
   const tundraOrcsCards = [
-    new Card("Grognack", "Summoner", 2, 7, 'melee', 0, true, { type: "FROST_ARMOR" }),
+    new Card("Grognack", "Summoner", 2, 7, 'melee', 0, true, { type: "FROST_ARMOR", text: "Frost Armor: This unit reduces damage by 1 to a minimum of 1." }),
     new Card("Tundra Orc", "Warrior", 2, 3, 'melee', 3, false, { type: "ORC_CHARGE" }),
     new Card("Ice Shaman", "Spearman", 1, 3, 'ranged', 3, false, { type: "ICE_STRIKE" }),
     new Card("Frost Giant", "Brute", 3, 5, 'melee', 5, false, { type: "GIANT_STRENGTH" }),
@@ -623,7 +662,7 @@ function resetGame(){setupGame();}
 function setup(){createCanvas(800,920);colorMode(HSB,360,100,100,100);cellWidth=width/CONFIG.GRID_COLS;cellHeight=(height-CONFIG.TOP_UI_SPACE-CONFIG.BOTTOM_UI_SPACE-CONFIG.HAND_CARD_HEIGHT-CONFIG.HAND_CARD_MARGIN)/CONFIG.GRID_ROWS;actionButtonRect={x:width-110,y:height-40,w:100,h:30,text:`End ${gameState.currentPhase} Phase`};setupGame();}
 
 function drawGrid(){stroke(0,0,70);strokeWeight(1);let gridBottomY=height-CONFIG.HAND_CARD_HEIGHT-CONFIG.HAND_CARD_MARGIN-CONFIG.BOTTOM_UI_SPACE;for(let r=0;r<=CONFIG.GRID_ROWS;r++)line(0,CONFIG.TOP_UI_SPACE+r*cellHeight,width,CONFIG.TOP_UI_SPACE+r*cellHeight);for(let c=0;c<=CONFIG.GRID_COLS;c++)line(c*cellWidth,CONFIG.TOP_UI_SPACE,c*cellWidth,gridBottomY);stroke(0,0,50);strokeWeight(2);line(0,CONFIG.TOP_UI_SPACE+(gridBottomY-CONFIG.TOP_UI_SPACE)/2,width,CONFIG.TOP_UI_SPACE+(gridBottomY-CONFIG.TOP_UI_SPACE)/2);}
-function drawHighlights(){if(gameState.gameOver)return;noStroke();fill(200,60,100,30);for(let cell of gameState.potentialMoveCells)rect(cell.col*cellWidth,CONFIG.TOP_UI_SPACE+cell.row*cellHeight,cellWidth,cellHeight);fill(120,70,90,40);for(let cell of gameState.potentialAttackCells)rect(cell.col*cellWidth,CONFIG.TOP_UI_SPACE+cell.row*cellHeight,cellWidth,cellHeight);fill(60,100,100,40);for(let cell of gameState.potentialSummonCells)rect(cell.col*cellWidth,CONFIG.TOP_UI_SPACE+cell.row*cellHeight,cellWidth,cellHeight);}
+function drawHighlights(){if(gameState.gameOver)return;noStroke();fill(200,60,100,30);for(let cell of gameState.potentialMoveCells)rect(cell.col*cellWidth,CONFIG.TOP_UI_SPACE+cell.row*cellHeight,cellWidth,cellHeight);fill(120,70,90,40);for(let cell of gameState.potentialAttackCells)rect(cell.col*cellWidth,CONFIG.TOP_UI_SPACE+cell.row*cellHeight,cellWidth,cellHeight);fill(60,100,100,40);for(let cell of gameState.potentialSummonCells)rect(cell.col*cellWidth,CONFIG.TOP_UI_SPACE+cell.row*cellHeight,cellWidth,cellHeight);fill(240,80,80,40);for(let cell of gameState.potentialEventTargets)rect(cell.col*cellWidth,CONFIG.TOP_UI_SPACE+cell.row*cellHeight,cellWidth,cellHeight);}
 function drawUnits(){for(let unit of gameState.units)unit.display();}
 function drawAttackAnimations(){
   // Decrement battle result display timer if active
@@ -788,6 +827,34 @@ function drawPlayerHand(){
     
     pop();
   }
+
+  // Draw tooltip for event cards
+  for (let card of currentHand) {
+    if (card.isMouseOver(mouseX, mouseY) && card.specialAbility && card.specialAbility.text) {
+      const lines = card.specialAbility.text.split('\n');
+      // Tooltip position
+      let tx = mouseX + 10;
+      let ty = mouseY + 10;
+      // Tooltip box size
+      const padding = 6;
+      const lineHeight = 14;
+      const w = max(...lines.map(l => textWidth(l))) + padding * 2;
+      const h = lines.length * lineHeight + padding * 2;
+      // Draw box
+      push();
+      fill(240, 80, 80);
+      stroke(0);
+      rect(tx, ty, w, h, 4);
+      fill(0);
+      textAlign(LEFT, TOP);
+      textSize(12);
+      // Draw each line
+      for (let i = 0; i < lines.length; i++) {
+        text(lines[i], tx + padding, ty + padding + i * lineHeight);
+      }
+      pop();
+    }
+  }
 }
 
 function draw(){background(60,10,95);gameState.units=gameState.units.filter(unit=>!unit.isDestroyed);drawGrid();if(!gameState.gameOver){for(let unit of gameState.units)unit.isHovered=unit.isMouseOver(mouseX,mouseY);drawHighlights();}drawUnits();drawAttackAnimations();drawGameUI();drawPlayerHand();cardActionMenu.draw();}
@@ -796,7 +863,7 @@ function pixelToGrid(mx,my){let gridAreaTop=CONFIG.TOP_UI_SPACE;let gridAreaBott
 function getUnitAt(r,c){for(let unit of gameState.units){if(unit.row===r&&unit.col===c&&unit.currentLifePoints>0)return unit;}return null;}
 function isCellOnBoard(r,c){return r>=0&&r<CONFIG.GRID_ROWS&&c>=0&&c<CONFIG.GRID_COLS;}
 function deselectUnitSelections(){if(gameState.selectedUnit)gameState.selectedUnit.isSelected=false;gameState.selectedUnit=null;gameState.potentialMoveCells=[];gameState.potentialAttackCells=[];}
-function deselectAllSelections(){deselectUnitSelections();gameState.selectedCardForSummoning=null;gameState.potentialSummonCells=[];cardActionMenu.close();}
+function deselectAllSelections(){deselectUnitSelections();gameState.selectedCardForSummoning=null;gameState.potentialSummonCells=[];gameState.selectedEventCard=null;gameState.potentialEventTargets=[];cardActionMenu.close();}
 function selectUnitForAction(unit){deselectAllSelections();gameState.selectedUnit=unit;unit.isSelected=true;refreshPotentialUnitActions();}
 function refreshPotentialUnitActions(){if(!gameState.selectedUnit)return;gameState.potentialMoveCells=gameState.selectedUnit.getValidMoveCells();gameState.potentialAttackCells=gameState.selectedUnit.getValidAttackCells();}
 function calculatePotentialSummonCells(){gameState.potentialSummonCells=[];if(!gameState.selectedCardForSummoning)return;let summonerUnit=gameState.units.find(u=>u.isSummoner&&u.isPlayer1===gameState.currentPlayerIsP1&&u.currentLifePoints>0);if(!summonerUnit)return;const adjacents=[[-1,0],[1,0],[0,-1],[0,1]];for(let adj of adjacents){let r=summonerUnit.row+adj[0];let c=summonerUnit.col+adj[1];if(isCellOnBoard(r,c)&&!getUnitAt(r,c))gameState.potentialSummonCells.push({row:r,col:c});}}
@@ -879,7 +946,27 @@ function handleActionButtonClick(){if(gameState.gameOver)resetGame();else endTur
 function handleHandCardClick(mx,my){if(gameState.gameOver)return false;let currentHand=gameState.currentPlayerIsP1?gameState.player1Hand:gameState.player2Hand;for(let i=0;i<currentHand.length;i++){let card=currentHand[i];if(card.isMouseOver(mx,my)){if(cardActionMenu.active&&cardActionMenu.card&&cardActionMenu.card.id===card.id){/* Already open for this card, do nothing or close? For now, nothing. */}else if(gameState.selectedCardForSummoning&&gameState.selectedCardForSummoning.id===card.id){deselectAllSelections(); // Clicking selected card again deselects it and closes menu
 cardActionMenu.open(card,i,card.displayX,card.displayY,card.displayWidth,card.displayHeight);}else{deselectAllSelections();cardActionMenu.open(card,i,card.displayX,card.displayY,card.displayWidth,card.displayHeight);}return true;}}return false;}
 
-function handleGridClick(mx,my,gridPos){let clickedUnitInstance=getUnitAt(gridPos.row,gridPos.col);if(gameState.selectedCardForSummoning){if (gameState.currentPhase === PHASES.SUMMON || gameState.currentPhase === PHASES.BUILD) { // Allow summoning/building in respective phases
+function handleGridClick(mx,my,gridPos){
+    // If an event card is selected for targeting
+    if (gameState.selectedEventCard) {
+        // Burn effect target
+        if (gameState.selectedEventCard.specialAbility.type === "BURN_EFFECT") {
+            for (let cell of gameState.potentialEventTargets) {
+                if (cell.row === gridPos.row && cell.col === gridPos.col) {
+                    const target = getUnitAt(gridPos.row, gridPos.col);
+                    if (target) {
+                        target.takeDamage(2);
+                    }
+                    // Clear event selection
+                    gameState.selectedEventCard = null;
+                    gameState.potentialEventTargets = [];
+                    return true;
+                }
+            }
+        }
+    }
+
+    let clickedUnitInstance=getUnitAt(gridPos.row,gridPos.col);if(gameState.selectedCardForSummoning){if (gameState.currentPhase === PHASES.SUMMON || gameState.currentPhase === PHASES.BUILD) { // Allow summoning/building in respective phases
 let placed=false;for(let cell of gameState.potentialSummonCells){if(cell.row===gridPos.row&&cell.col===gridPos.col){let newUnit=gameState.selectedCardForSummoning.createUnit(gridPos.row,gridPos.col,gameState.currentPlayerIsP1);if(newUnit){ // createUnit returns null for Event cards
 gameState.units.push(newUnit);if(gameState.currentPlayerIsP1)gameState.player1Mana-=gameState.selectedCardForSummoning.summonCost;else gameState.player2Mana-=gameState.selectedCardForSummoning.summonCost;if(gameState.currentPlayerIsP1)gameState.player1Hand=gameState.player1Hand.filter(c=>c.id!==gameState.selectedCardForSummoning.id);else gameState.player2Hand=gameState.player2Hand.filter(c=>c.id!==gameState.selectedCardForSummoning.id);placed=true;break;}}else{console.log("Cannot play event card by clicking grid. Event cards are played from hand menu.");}}deselectAllSelections();return true;}} else if(gameState.selectedUnit){let actionPerformed=false;if(gameState.currentPhase === PHASES.MOVE && gameState.selectedUnit.canMoveNow() && gameState.unitsMovedThisPhase.length < 3 && !gameState.unitsMovedThisPhase.includes(gameState.selectedUnit.id)){for(let mC of gameState.potentialMoveCells){if(mC.row===gridPos.row&&mC.col===gridPos.col){gameState.selectedUnit.moveTo(gridPos.row,gridPos.col);actionPerformed=true;break;}}}if(!actionPerformed && gameState.currentPhase === PHASES.ATTACK && gameState.selectedUnit.canAttackNow() && gameState.unitsAttackedThisPhase.length < 3 && !gameState.unitsAttackedThisPhase.includes(gameState.selectedUnit.id)){for(let aC of gameState.potentialAttackCells){if(aC.row===gridPos.row&&aC.col===gridPos.col){let tU=getUnitAt(aC.row,aC.col);if(tU&&tU.isPlayer1!==gameState.selectedUnit.isPlayer1){gameState.selectedUnit.attack(tU);actionPerformed=true;}break;}}}if(actionPerformed){let canStillAct = false;if (gameState.currentPhase === PHASES.MOVE && gameState.selectedUnit.canMoveNow() && gameState.unitsMovedThisPhase.length < 3 && !gameState.unitsMovedThisPhase.includes(gameState.selectedUnit.id)) {canStillAct = true;}if (gameState.currentPhase === PHASES.ATTACK && gameState.selectedUnit.canAttackNow() && gameState.unitsAttackedThisPhase.length < 3 && !gameState.unitsAttackedThisPhase.includes(gameState.selectedUnit.id)) {canStillAct = true;}if(!canStillAct) deselectAllSelections();else refreshPotentialUnitActions();}else{if(clickedUnitInstance&&clickedUnitInstance.isPlayer1===gameState.currentPlayerIsP1)selectUnitForAction(clickedUnitInstance);else deselectAllSelections();}return true;}else{if(clickedUnitInstance&&clickedUnitInstance.isPlayer1===gameState.currentPlayerIsP1){if((gameState.currentPhase === PHASES.MOVE && clickedUnitInstance.canMoveNow() && gameState.unitsMovedThisPhase.length < 3 && !gameState.unitsMovedThisPhase.includes(clickedUnitInstance.id)) || (gameState.currentPhase === PHASES.ATTACK && clickedUnitInstance.canAttackNow() && gameState.unitsAttackedThisPhase.length < 3 && !gameState.unitsAttackedThisPhase.includes(clickedUnitInstance.id)))selectUnitForAction(clickedUnitInstance);}else{deselectAllSelections();}return true;}}
 
