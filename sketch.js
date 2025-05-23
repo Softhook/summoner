@@ -16,6 +16,16 @@ const CONFIG = {
     BATTLE_RESULT_DISPLAY_TIME: 360, // Animation frames to show battle results (3 seconds at 60fps)
 };
 
+// Define dice faces distribution
+const DICE_FACES = [
+  { sword: true, range: true, shield: false },   // Face 1: 🗡🏹
+  { sword: true, range: true, shield: false },   // Face 2: 🗡🏹
+  { sword: true, range: true, shield: false },   // Face 3: 🗡🏹
+  { sword: true, range: false, shield: false },  // Face 4: 🗡
+  { sword: true, range: false, shield: true },   // Face 5: 🗡🛡
+  { sword: false, range: true, shield: true }    // Face 6: 🏹🛡
+];
+
 // --- GLOBAL GAME VARIABLES (Derived from CONFIG or P5) ---
 let cellWidth, cellHeight;
 
@@ -116,6 +126,7 @@ class CardActionMenuManager {
             rect(this.scrapButtonRect.x, this.scrapButtonRect.y, this.scrapButtonRect.w, this.scrapButtonRect.h, 3);
             fill(0);
             textAlign(CENTER, CENTER);
+            textSize(10);
             text(this.scrapButtonRect.text,
                  this.scrapButtonRect.x + this.scrapButtonRect.w/2,
                  this.scrapButtonRect.y + this.scrapButtonRect.h/2);
@@ -418,111 +429,45 @@ class Unit {
     }
   }
   attack(targetUnit){
-    let hits=0;
-    let dR=[];
+    let hits = 0;
+    let dR = [];
     let bonusRoll = false;
     let specialAbilityText = "";
-    
+
+    // Helper to roll a number of dice using symbol faces
+    function rollDice(num) {
+        for (let i = 0; i < num; i++) {
+            const face = DICE_FACES[floor(random(0, DICE_FACES.length))];
+            let faceSymbols = "";
+            if (face.sword) faceSymbols += "🗡";
+            if (face.range) faceSymbols += "🏹";
+            if (face.shield) faceSymbols += "🛡";
+            dR.push(faceSymbols);
+            // Default hit: melee uses sword, ranged uses range
+            if (this.rangeType === 'melee' && face.sword) hits++;
+            if (this.rangeType === 'ranged' && face.range) hits++;
+        }
+    }
+
     // Apply special abilities that affect attack rolls
     if (this.specialAbility) {
-      if (this.specialAbility.type === "ACCURACY") {
-        // Ember Archer hits on 2+ instead of 3+
-        for (let i=0; i<this.attackValue; i++) {
-          let r = floor(random(1,7));
-          dR.push(r);
-          if (r >= 2) hits++;
+        if (this.specialAbility.type === "ACCURACY") {
+            // Ember Archer: same symbol logic, but counts swords? For now use default rollDice
+            rollDice.call(this, this.attackValue);
+            specialAbilityText = " (Accuracy)";
+        } else if (this.specialAbility.type === "FIRE_BOMB" && !targetUnit.hasMovedThisTurn) {
+            rollDice.call(this, this.attackValue);
+            hits += 2;
+            specialAbilityText = " (Fire Bomb: +2 damage)";
+        } else {
+            // For other abilities falling back to default roll
+            rollDice.call(this, this.attackValue);
         }
-        specialAbilityText = " (Accuracy: hits on 2+)";
-      } else if (this.specialAbility.type === "FIRE_BOMB" && !targetUnit.hasMovedThisTurn) {
-        // Fire Bomber deals +2 damage to stationary targets
-        for (let i=0; i<this.attackValue; i++) {
-          let r = floor(random(1,7));
-          dR.push(r);
-          if (r >= 3) hits++;
-        }
-        hits += 2;
-        specialAbilityText = " (Fire Bomb: +2 damage to stationary target)";
-      } else if (this.specialAbility.type === "ICE_STRIKE" && hits > 0) {
-        // Ice Shaman prevents target from moving next turn
-        targetUnit.hasMovedThisTurn = true;
-        specialAbilityText = " (Ice Strike: target cannot move)";
-      } else if (this.specialAbility.type === "FENCER_STRIKE") {
-        // Phoenix Knight gets bonus attack on hit
-        for (let i=0; i<this.attackValue; i++) {
-          let r = floor(random(1,7));
-          dR.push(r);
-          if (r >= 3) {
-            hits++;
-            // Extra roll on first hit
-            if (!bonusRoll) {
-              bonusRoll = true;
-              let bonusR = floor(random(1,7));
-              dR.push(bonusR);
-              if (bonusR >= 3) hits++;
-              specialAbilityText = " (Fencer Strike: bonus attack on hit)";
-            }
-          }
-        }
-      } else if (this.specialAbility.type === "FIRE_CHARGE" && this.hasMovedThisTurn) {
-        // Fire Striker gets +1 attack if moved this turn
-        for (let i=0; i<this.attackValue+1; i++) {
-          let r = floor(random(1,7));
-          dR.push(r);
-          if (r >= 3) hits++;
-        }
-        specialAbilityText = " (Fire Charge: +1 attack dice after moving)";
-      } else if (this.specialAbility.type === "ORC_CHARGE" && this.hasMovedThisTurn) {
-        // Tundra Orc gets +1 damage if moved this turn
-        for (let i=0; i<this.attackValue; i++) {
-          let r = floor(random(1,7));
-          dR.push(r);
-          if (r >= 3) hits++;
-        }
-        hits += 1;
-        specialAbilityText = " (Orc Charge: +1 damage after moving)";
-      } else if (this.specialAbility.type === "ICE_ARROWS") {
-        // Winter Hunter reduces enemy attack value temporarily
-        for (let i=0; i<this.attackValue; i++) {
-          let r = floor(random(1,7));
-          dR.push(r);
-          if (r >= 3) hits++;
-        }
-        targetUnit.attackValue = Math.max(1, targetUnit.attackValue-1);
-        specialAbilityText = " (Ice Arrows: target loses 1 attack dice)";
-      } else if (this.specialAbility.type === "GIANT_STRENGTH") {
-        // Frost Giant deals more damage with successful hits
-        for (let i=0; i<this.attackValue; i++) {
-          let r = floor(random(1,7));
-          dR.push(r);
-          if (r >= 3) {
-            hits += 2; // Deal 2 damage per hit instead of 1
-          }
-        }
-        specialAbilityText = " (Giant Strength: 2 damage per hit)";
-      } else if (this.specialAbility.type === "GUARDIAN_SHIELD") {
-        // Royal Guardian has better defense against single attacks
-        for (let i=0; i<this.attackValue; i++) {
-          let r = floor(random(1,7));
-          dR.push(r);
-          if (r >= 3) hits++;
-        }
-      } else {
-        // Normal attack for units without attack-modifying abilities
-        for (let i=0; i<this.attackValue; i++) {
-          let r = floor(random(1,7));
-          dR.push(r);
-          if (r >= 3) hits++;
-        }
-      }
     } else {
-      // Normal attack for units without special abilities
-      for (let i=0; i<this.attackValue; i++) {
-        let r = floor(random(1,7));
-        dR.push(r);
-        if (r >= 3) hits++;
-      }
+        // Normal attack for units without special abilities
+        rollDice.call(this, this.attackValue);
     }
-    
+
     // Generate battle result text
     gameState.currentDiceRollResult = `${this.name}(${this.isPlayer1?'P1':'P2'}) attacks ${targetUnit.name}(${targetUnit.isPlayer1?'P1':'P2'})! Rolls:[${dR.join(',')}] -> ${hits} Hits${specialAbilityText}.`;
     gameState.battleResultDisplayTimer = CONFIG.BATTLE_RESULT_DISPLAY_TIME;
@@ -785,107 +730,64 @@ function drawGameUI(){
 }
 function drawPlayerHand(){
   if(gameState.gameOver) return;
-  
   let currentHand = gameState.currentPlayerIsP1 ? gameState.player1Hand : gameState.player2Hand;
   let handStartX = 20;
   let handDisplayBaseY = height - CONFIG.HAND_CARD_HEIGHT - 5;
-  
+
   for(let i=0; i<currentHand.length; i++){
     let card = currentHand[i];
-    card.displayX = handStartX + i * (CONFIG.HAND_CARD_WIDTH + 10);
+    card.displayX = handStartX + i * (CONFIG.HAND_CARD_WIDTH + CONFIG.HAND_CARD_MARGIN);
     card.displayY = handDisplayBaseY;
     card.displayWidth = CONFIG.HAND_CARD_WIDTH;
     card.displayHeight = CONFIG.HAND_CARD_HEIGHT;
-    
+
+    // Draw card background
     push();
     translate(card.displayX, card.displayY);
     strokeWeight(2);
-    
-    if(cardActionMenu.active && cardActionMenu.card && cardActionMenu.card.id === card.id)
-      stroke(60, 100, 100);
-    else if(gameState.selectedCardForSummoning && gameState.selectedCardForSummoning.id === card.id)
-      stroke(60, 80, 100);
-    else
-      stroke(0, 0, 20);
-    
     let currentMana = gameState.currentPlayerIsP1 ? gameState.player1Mana : gameState.player2Mana;
-    if(card.summonCost > currentMana)
-      fill(0, 0, 50, 70);
-    else
-      fill(45, 20, 95);
-    
+    fill(card.summonCost <= currentMana ? [45,20,95] : [0,0,50,70]);
     rect(0, 0, card.displayWidth, card.displayHeight, 5);
-    
-    // Draw card content
-    fill(0);
-    noStroke();
-    textAlign(CENTER, TOP);
-    textSize(12);
-    text(card.unitName, card.displayWidth/2, 10);
-    
-    // Add special ability indicator and text if the card has one
-    if(card.specialAbility) {
-      fill(210, 100, 70);
-      noStroke();
-      textSize(8);
-      
-      let abilityName = "";
-      switch(card.specialAbility.type) {
-        case "MANA_BOOST": abilityName = "Mana Boost"; break;
-        case "ACCURACY": abilityName = "Accuracy"; break;
-        case "GUARDIAN_SHIELD": abilityName = "Guardian Shield"; break;
-        case "FIRE_CHARGE": abilityName = "Fire Charge"; break;
-        case "FIRE_BOMB": abilityName = "Fire Bomb"; break;
-        case "FENCER_STRIKE": abilityName = "Fencer Strike"; break;
-        case "FROST_ARMOR": abilityName = "Frost Armor"; break;
-        case "ORC_CHARGE": abilityName = "Orc Charge"; break;
-        case "ICE_STRIKE": abilityName = "Ice Strike"; break;
-        case "GIANT_STRENGTH": abilityName = "Giant Strength"; break;
-        case "MAMMOTH_RIDER": abilityName = "Mammoth Push"; break;
-        case "ICE_ARROWS": abilityName = "Ice Arrows"; break;
-      }
-      
-      text(abilityName, card.displayWidth/2, 25);
-      
-      // Star indicator for special ability
-      fill(210, 100, 100);
-      push();
-      translate(card.displayWidth - 15, 15);
-      drawStar(0, 0, 3, 7, 5);
-      pop();
-    }
-    
-    textSize(10);
-    fill(0);
-    text(`Cost: ${card.summonCost}`, card.displayWidth/2, card.displayHeight-25);
-    text(`A:${card.attackValue} L:${card.lifePoints}`, card.displayWidth/2, card.displayHeight-12);
-    
-    pop();
-  }
 
-  // Draw tooltip for event cards
-  for (let card of currentHand) {
-    if (card.isMouseOver(mouseX, mouseY) && card.specialAbility && card.specialAbility.text) {
-      const lines = card.specialAbility.text.split('\n');
-      // Tooltip position
+    // Draw card name
+    noStroke(); fill(0);
+    textAlign(CENTER, TOP); textSize(12);
+    text(card.unitName, card.displayWidth/2, 8);
+
+    // Draw cost, attack, life
+    textSize(10);
+    text(`Cost:${card.summonCost}`, card.displayWidth/2, card.displayHeight - 30);
+    if(card.attackValue !== null && card.lifePoints !== null) {
+      text(`A:${card.attackValue} L:${card.lifePoints}`, card.displayWidth/2, card.displayHeight - 15);
+    }
+
+    // Draw special ability name indicator
+    if(card.specialAbility && card.specialAbility.type){
+      fill(210,100,70);
+      textSize(8);
+      let abilityText = card.specialAbility.text ? card.specialAbility.type.replace(/_/g,' ') : card.specialAbility.type;
+      text(abilityText, card.displayWidth/2, 25);
+    }
+    pop();
+
+    // Tooltip: display full card text on hover
+    if(card.isMouseOver(mouseX, mouseY) && card.specialAbility && card.specialAbility.text) {
+      let lines = card.specialAbility.text.split(/\.\s*/g);
       let tx = mouseX + 10;
       let ty = mouseY + 10;
-      // Tooltip box size
-      const padding = 6;
-      const lineHeight = 14;
-      const w = max(...lines.map(l => textWidth(l))) + padding * 2;
-      const h = lines.length * lineHeight + padding * 2;
-      // Draw box
+      let padding = 6;
+      textSize(12);
+      let maxW = 0;
+      for(let line of lines) maxW = max(maxW, textWidth(line));
+      let boxW = maxW + padding * 2;
+      let boxH = lines.length * 14 + padding * 2;
       push();
-      fill(240, 80, 80);
-      stroke(0);
-      rect(tx, ty, w, h, 4);
+      fill(240,80,80,220); stroke(0);
+      rect(tx, ty, boxW, boxH, 4);
       fill(0);
       textAlign(LEFT, TOP);
-      textSize(12);
-      // Draw each line
-      for (let i = 0; i < lines.length; i++) {
-        text(lines[i], tx + padding, ty + padding + i * lineHeight);
+      for(let j=0; j<lines.length; j++){
+        text(lines[j], tx + padding, ty + padding + j*14);
       }
       pop();
     }
