@@ -1,4 +1,3 @@
-
 // --- CONFIGURATION CONSTANTS ---
 const CONFIG = {
     GRID_ROWS: 8,
@@ -20,6 +19,16 @@ const CONFIG = {
 // --- GLOBAL GAME VARIABLES (Derived from CONFIG or P5) ---
 let cellWidth, cellHeight;
 
+const PHASES = {
+    SUMMON: "Summon",
+    MOVE: "Move",
+    BUILD: "Build",
+    ATTACK: "Attack",
+    MAGIC: "Magic",
+    DRAW: "Draw"
+};
+const PHASE_ORDER = [PHASES.SUMMON, PHASES.MOVE, PHASES.BUILD, PHASES.ATTACK, PHASES.MAGIC, PHASES.DRAW];
+
 // --- GAME STATE ---
 let gameState = {
     units: [],
@@ -28,8 +37,12 @@ let gameState = {
     currentPlayerIsP1: true,
     player1Mana: 0,
     player2Mana: 0,
-    movesMadeThisTurn: 0,
-    attacksMadeThisTurn: 0,
+    currentPhase: PHASE_ORDER[0], // Start with the first phase
+    movesMadeThisTurn: 0, // Will be refined for "up to 3 different units"
+    attacksMadeThisTurn: 0, // Will be refined for "up to 3 different units"
+    unitsMovedThisPhase: [], // To track unique units moved in Move phase
+    unitsAttackedThisPhase: [], // To track unique units attacked in Attack phase
+    hasTargetedEnemyThisTurn: false, // For "Cost of Inaction" rule
     gameOver: false,
     winnerMessage: "",
     attackAnimations: [],
@@ -75,37 +88,122 @@ class CardActionMenuManager {
         if (!this.active) return false;
         let currentMana = gameState.currentPlayerIsP1 ? gameState.player1Mana : gameState.player2Mana;
         let actionTaken = false;
+
         if (isMouseOverRect(mx,my,this.playButtonRect)) {
             if (this.card.summonCost <= currentMana) {
-                deselectUnitSelections(); gameState.selectedCardForSummoning = this.card; calculatePotentialSummonCells();
-            } else { console.log("Not enough mana for Play."); gameState.selectedCardForSummoning = null; gameState.potentialSummonCells = []; }
-            this.close(); actionTaken = true;
+                if (this.card.unitType === "Event") {
+                    // Handle playing event cards
+                    if ( (gameState.currentPhase === PHASES.SUMMON && this.card.specialAbility.phase === PHASES.SUMMON) || 
+                         (gameState.currentPhase === PHASES.BUILD && this.card.specialAbility.phase === PHASES.BUILD) || 
+                         (!this.card.specialAbility.phase) ) { // Some events might be playable anytime or have their phase checked elsewhere
+                        
+                        playEventCard(this.card);
+                        if (gameState.currentPlayerIsP1) {
+                            gameState.player1Mana -= this.card.summonCost;
+                            gameState.player1Hand.splice(this.cardIndexInHand, 1);
+                        } else {
+                            gameState.player2Mana -= this.card.summonCost;
+                            gameState.player2Hand.splice(this.cardIndexInHand, 1);
+                        }
+                        actionTaken = true;
+                    } else {
+                        console.log(`Cannot play ${this.card.unitName} during ${gameState.currentPhase} phase.`);
+                    }
+                } else if (gameState.currentPhase === PHASES.SUMMON || gameState.currentPhase === PHASES.BUILD) {
+                    // Handle summoning units or building structures
+                    deselectUnitSelections(); 
+                    gameState.selectedCardForSummoning = this.card; 
+                    calculatePotentialSummonCells(); // This function might need adjustment for structures
+                } else {
+                    console.log(`Cannot summon or build during ${gameState.currentPhase} phase.`);
+                }
+            } else { 
+                console.log("Not enough mana for Play."); 
+                gameState.selectedCardForSummoning = null; 
+                gameState.potentialSummonCells = []; 
+            }
+            this.close(); 
+            actionTaken = true; // Action is taken whether successful or not, to close the menu
         } else if (isMouseOverRect(mx,my,this.scrapButtonRect)) {
-            if (gameState.currentPlayerIsP1) { gameState.player1Mana++; gameState.player1Hand.splice(this.cardIndexInHand,1); }
-            else { gameState.player2Mana++; gameState.player2Hand.splice(this.cardIndexInHand,1); }
-            deselectAllSelections(); actionTaken = true;
+            if (gameState.currentPhase === PHASES.MAGIC) {
+                if (gameState.currentPlayerIsP1) { 
+                    gameState.player1Mana++; 
+                    gameState.player1Hand.splice(this.cardIndexInHand,1); 
+                } else { 
+                    gameState.player2Mana++; 
+                    gameState.player2Hand.splice(this.cardIndexInHand,1); 
+                }
+                actionTaken = true;
+            } else {
+                console.log("Can only scrap cards for mana during the Magic phase.");
+            }
+            deselectAllSelections(); // Close menu and deselect after scrapping or attempting to scrap
         }
         return actionTaken;
     }
 }
+
+function playEventCard(card) {
+    console.log(`Playing event card: ${card.unitName}`);
+    // Placeholder for actual event card logic
+    // Based on card.specialAbility.type, trigger different effects
+
+    // Example structure for event effects:
+    // switch (card.specialAbility.type) {
+    //     case "BLINDING_FLARE_EFFECT":
+    //         // Implement Blinding Flare logic
+    //         break;
+    //     case "BURN_EFFECT":
+    //         // Implement Burn logic
+    //         break;
+    //     case "DIVINE_RETRIBUTION_EFFECT":
+    //         // Implement Divine Retribution logic
+    //         break;
+    //     // Add cases for other event cards
+    // }
+
+    // For now, just a log message
+    gameState.currentDiceRollResult = `Event: ${card.unitName} played.`;
+    gameState.battleResultDisplayTimer = CONFIG.BATTLE_RESULT_DISPLAY_TIME;
+
+    // Event cards are typically discarded after playing, unless they are "ACTIVE"
+    // This will be handled by the calling function (handleMousePress in CardActionMenuManager)
+}
+
 let cardActionMenu = new CardActionMenuManager();
 
 class Card {
-    constructor(unitName, unitType, attackValue, lifePoints, rangeType, summonCost, isSummonerCard = false, specialAbility = null) {
-        this.unitName=unitName; this.unitType=unitType; this.attackValue=attackValue; this.lifePoints=lifePoints;
-        this.rangeType=rangeType; this.summonCost=summonCost; this.isSummonerCard=isSummonerCard;
-        this.specialAbility=specialAbility; // Store special ability info
-        this.id=unitName+"_"+summonCost+"_"+Math.random().toString(16).slice(9);
+    constructor(unitName, unitType, attackValue = null, lifePoints = null, rangeType = null, summonCost, isSummonerCard = false, specialAbility = null) {
+        this.unitName = unitName;
+        this.unitType = unitType; // Can be 'Summoner', 'Archer', 'Guard', 'Warrior', 'Brute', 'Event', etc.
+        this.attackValue = attackValue;
+        this.lifePoints = lifePoints;
+        this.rangeType = rangeType;
+        this.summonCost = summonCost;
+        this.isSummonerCard = isSummonerCard; // True only for the initial summoner card, not for playable cards
+        this.specialAbility = specialAbility; // Stores special ability info or event effect details
+        this.id = unitName + "_" + summonCost + "_" + Math.random().toString(16).slice(9);
     }
-    createUnit(row,col,isPlayer1){
+
+    isMouseOver(mx, my) {
+        return mx > this.displayX && mx < this.displayX + this.displayWidth &&
+               my > this.displayY && my < this.displayY + this.displayHeight;
+    }
+
+    createUnit(row, col, isPlayer1) {
+        if (this.unitType === "Event") {
+            // Event cards don't create units
+            console.log("Cannot create unit from an Event card:", this.unitName);
+            return null;
+        }
         return new Unit(
-            this.unitName, row, col, isPlayer1, 
-            this.attackValue, this.lifePoints, 
-            this.rangeType, this.unitType, 
-            this.isSummonerCard, this.specialAbility
+            this.unitName, row, col, isPlayer1,
+            this.attackValue, this.lifePoints,
+            this.rangeType, this.unitType, // unitType here refers to the type of unit (Archer, Guard etc)
+            this.isSummonerCard, // This should generally be false when creating from a hand card
+            this.specialAbility // Pass the unit's special ability
         );
     }
-    isMouseOver(mx,my){return mx>this.displayX&&mx<this.displayX+this.displayWidth&&my>this.displayY&&my<this.displayY+this.displayHeight;}
 }
 
 class Unit {
@@ -261,7 +359,11 @@ class Unit {
   canAttackNow(){return this.currentLifePoints>0&&!this.hasAttackedThisTurn&&gameState.attacksMadeThisTurn<CONFIG.MAX_ATTACKS_PER_TURN;}
   getValidMoveCells(){let pM=[];if(!this.canMoveNow())return pM;let q=[{r:this.row,c:this.col,steps:0}];let v=new Set([`${this.row},${this.col}`]);while(q.length>0){let cur=q.shift();if(cur.steps>0&&!getUnitAt(cur.r,cur.c))pM.push({row:cur.r,col:cur.c});if(cur.steps<this.moveRange){let ad=[[-1,0],[1,0],[0,-1],[0,1]];for(let a of ad){let nR=cur.r+a[0];let nC=cur.c+a[1];let nK=`${nR},${nC}`;if(isCellOnBoard(nR,nC)&&!v.has(nK)){if(!getUnitAt(nR,nC)){v.add(nK);q.push({r:nR,c:nC,steps:cur.steps+1})}}}}}return pM;}
   getValidAttackCells(){let tgts=[];if(!this.canAttackNow())return tgts;if(this.rangeType==='melee'){const ad=[[-1,0],[1,0],[0,-1],[0,1]];for(let a of ad){let r=this.row+a[0];let c=this.col+a[1];if(isCellOnBoard(r,c)){let uC=getUnitAt(r,c);if(uC&&uC.isPlayer1!==this.isPlayer1&&uC.currentLifePoints>0)tgts.push({row:r,col:c})}}}else if(this.rangeType==='ranged'){const dirs=[[-1,0],[1,0],[0,-1],[0,1]];for(let d of dirs){for(let i=1;i<=this.attackRange;i++){let r=this.row+d[0]*i;let c=this.col+d[1]*i;if(!isCellOnBoard(r,c))break;let uC=getUnitAt(r,c);if(uC){if(uC.isPlayer1!==this.isPlayer1&&uC.currentLifePoints>0)tgts.push({row:r,col:c});break}}}};return tgts;}
-  moveTo(r,c){this.row=r;this.col=c;this.hasMovedThisTurn=true;gameState.movesMadeThisTurn++;}
+  moveTo(r,c){this.row=r;this.col=c;this.hasMovedThisTurn=true; 
+    if (!gameState.unitsMovedThisPhase.includes(this.id)) {
+        gameState.unitsMovedThisPhase.push(this.id);
+    }
+  }
   attack(targetUnit){
     let hits=0;
     let dR=[];
@@ -386,6 +488,7 @@ class Unit {
     if (targetUnit.currentLifePoints <= 0 && !targetUnit.isDestroyed) {
       // Provide 1 mana when a unit is killed
       if (this.isPlayer1) gameState.player1Mana += 1; else gameState.player2Mana += 1;
+      gameState.hasTargetedEnemyThisTurn = true; // An enemy was targeted and destroyed
       
       // Prince Elien ability: gain extra mana when killing an enemy (Mana Boost)
       if (this.specialAbility && this.specialAbility.type === "MANA_BOOST") {
@@ -397,7 +500,12 @@ class Unit {
     }
     
     this.hasAttackedThisTurn = true;
-    gameState.attacksMadeThisTurn++;
+    if (!gameState.unitsAttackedThisPhase.includes(this.id)) {
+        gameState.unitsAttackedThisPhase.push(this.id);
+    }
+    if (targetUnit.isPlayer1 !== this.isPlayer1) {
+        gameState.hasTargetedEnemyThisTurn = true; // An enemy was targeted
+    }
     
     let aP = this.getPixelPos();
     let tP = targetUnit.getPixelPos();
@@ -440,14 +548,20 @@ class Unit {
 }
 
 function populateAllAvailableCards(){
-  // Define Phoenix Elves cards (2nd Edition)
+  // Define Phoenix Elves cards (2nd Edition based on new images)
   const phoenixElvesCards = [
-    new Card("Prince Elien", "Summoner", 2, 6, 'melee', 0, true, { type: "MANA_BOOST" }),
-    new Card("Ember Archer", "Archer", 1, 2, 'ranged', 2, false, { type: "ACCURACY" }),
-    new Card("Royal Guardian", "Guard", 2, 4, 'melee', 4, false, { type: "GUARDIAN_SHIELD" }),
-    new Card("Fire Striker", "Warrior", 3, 2, 'melee', 3, false, { type: "FIRE_CHARGE" }),
-    new Card("Fire Bomber", "Archer", 2, 1, 'ranged', 3, false, { type: "FIRE_BOMB" }),
-    new Card("Phoenix Knight", "Warrior", 3, 3, 'melee', 4, false, { type: "FENCER_STRIKE" }),
+    // Queen Maldaria is the summoner, not a drawable card
+    new Card("Ember Archer", "Archer", 2, 2, 'ranged', 1, false, { type: "QUICK_SHOT" }),
+    new Card("Ember Beast", "Brute", 3, 3, 'melee', 2, false, { type: "EMBER_BEAST_ABILITIES", born_of_fire: true, wildfire: true }),
+    new Card("Ember Mage", "Archer", 2, 2, 'ranged', 1, false, { type: "GUARDED" }),
+    new Card("Royal Guardian", "Guard", 1, 4, 'melee', 2, false, { type: "ROYAL_GUARDIAN_ABILITIES", engage: true, shove: true }),
+    new Card("Fanessa", "Warrior", 3, 9, 'melee', 5, false, { type: "RIPOSTE" }),
+    new Card("Fire Drake", "Brute", 4, 10, 'ranged', 8, false, { type: "FIRE_DRAKE_ABILITIES", protector: true, fire_breath: true }),
+    new Card("Holleas", "Archer", 3, 7, 'ranged', 5, false, { type: "HOLLEAS_ABILITIES", fiery_summon: true, ignite: true }),
+    // Phoenix Elves Event Cards
+    new Card("Blinding Flare", "Event", null, null, null, 2, false, { type: "BLINDING_FLARE_EFFECT" }),
+    new Card("Burn", "Event", null, null, null, 1, false, { type: "BURN_EFFECT" }),
+    new Card("Divine Retribution", "Event", null, null, null, 3, false, { type: "DIVINE_RETRIBUTUTION_EFFECT" })
   ];
   
   // Define Tundra Orcs cards (2nd Edition)
@@ -471,8 +585,8 @@ function populateAllAvailableCards(){
 }
 function initializeUnits(){
   gameState.units=[];
-  // Player 1 uses Phoenix Elves with Prince Elien as summoner
-  gameState.units.push(new Unit("Prince Elien",CONFIG.GRID_ROWS-1,floor(CONFIG.GRID_COLS/2)-1,true,2,6,'melee',"Summoner",true));
+  // Player 1 uses Phoenix Elves with Queen Maldaria as summoner
+  gameState.units.push(new Unit("Queen Maldaria",CONFIG.GRID_ROWS-1,floor(CONFIG.GRID_COLS/2)-1,true,4,9,'ranged',"Summoner",true, { type: "QUEEN_ABILITIES", call_protection: true, save_the_queen: true }));
   // Player 2 uses Tundra Orcs with Grognack as summoner
   gameState.units.push(new Unit("Grognack",0,floor(CONFIG.GRID_COLS/2)-1,false,2,7,'melee',"Summoner",true));
 }
@@ -503,10 +617,10 @@ function drawNewCardForPlayer(isPlayer1){
     gameState.player2Hand.push(newDrawnCard);
 }
 function initializeManaAndHands(){gameState.player1Mana=CONFIG.STARTING_MANA;gameState.player2Mana=CONFIG.STARTING_MANA;gameState.player1Hand=[];gameState.player2Hand=[];for(let i=0;i<CONFIG.INITIAL_HAND_SIZE;i++){drawNewCardForPlayer(true);drawNewCardForPlayer(false);}}
-function setupGame(){populateAllAvailableCards();initializeUnits();initializeManaAndHands();gameState.currentPlayerIsP1=true;gameState.movesMadeThisTurn=0;gameState.attacksMadeThisTurn=0;gameState.currentDiceRollResult="";gameState.gameOver=false;gameState.winnerMessage="";gameState.selectedUnit=null;gameState.selectedCardForSummoning=null;gameState.potentialMoveCells=[];gameState.potentialAttackCells=[];gameState.potentialSummonCells=[];gameState.attackAnimations=[];cardActionMenu.close();actionButtonRect.text="End Turn";}
+function setupGame(){populateAllAvailableCards();initializeUnits();initializeManaAndHands();gameState.currentPlayerIsP1=true;gameState.movesMadeThisTurn=0;gameState.attacksMadeThisTurn=0;gameState.unitsMovedThisPhase=[];gameState.unitsAttackedThisPhase=[];gameState.hasTargetedEnemyThisTurn=false;gameState.currentPhase=PHASE_ORDER[0];gameState.currentDiceRollResult="";gameState.gameOver=false;gameState.winnerMessage="";gameState.selectedUnit=null;gameState.selectedCardForSummoning=null;gameState.potentialMoveCells=[];gameState.potentialAttackCells=[];gameState.potentialSummonCells=[];gameState.attackAnimations=[];cardActionMenu.close();actionButtonRect.text=`End ${gameState.currentPhase} Phase`;}
 function resetGame(){setupGame();}
 
-function setup(){createCanvas(800,920);colorMode(HSB,360,100,100,100);cellWidth=width/CONFIG.GRID_COLS;cellHeight=(height-CONFIG.TOP_UI_SPACE-CONFIG.BOTTOM_UI_SPACE-CONFIG.HAND_CARD_HEIGHT-CONFIG.HAND_CARD_MARGIN)/CONFIG.GRID_ROWS;actionButtonRect={x:width-110,y:height-40,w:100,h:30,text:"End Turn"};setupGame();}
+function setup(){createCanvas(800,920);colorMode(HSB,360,100,100,100);cellWidth=width/CONFIG.GRID_COLS;cellHeight=(height-CONFIG.TOP_UI_SPACE-CONFIG.BOTTOM_UI_SPACE-CONFIG.HAND_CARD_HEIGHT-CONFIG.HAND_CARD_MARGIN)/CONFIG.GRID_ROWS;actionButtonRect={x:width-110,y:height-40,w:100,h:30,text:`End ${gameState.currentPhase} Phase`};setupGame();}
 
 function drawGrid(){stroke(0,0,70);strokeWeight(1);let gridBottomY=height-CONFIG.HAND_CARD_HEIGHT-CONFIG.HAND_CARD_MARGIN-CONFIG.BOTTOM_UI_SPACE;for(let r=0;r<=CONFIG.GRID_ROWS;r++)line(0,CONFIG.TOP_UI_SPACE+r*cellHeight,width,CONFIG.TOP_UI_SPACE+r*cellHeight);for(let c=0;c<=CONFIG.GRID_COLS;c++)line(c*cellWidth,CONFIG.TOP_UI_SPACE,c*cellWidth,gridBottomY);stroke(0,0,50);strokeWeight(2);line(0,CONFIG.TOP_UI_SPACE+(gridBottomY-CONFIG.TOP_UI_SPACE)/2,width,CONFIG.TOP_UI_SPACE+(gridBottomY-CONFIG.TOP_UI_SPACE)/2);}
 function drawHighlights(){if(gameState.gameOver)return;noStroke();fill(200,60,100,30);for(let cell of gameState.potentialMoveCells)rect(cell.col*cellWidth,CONFIG.TOP_UI_SPACE+cell.row*cellHeight,cellWidth,cellHeight);fill(120,70,90,40);for(let cell of gameState.potentialAttackCells)rect(cell.col*cellWidth,CONFIG.TOP_UI_SPACE+cell.row*cellHeight,cellWidth,cellHeight);fill(60,100,100,40);for(let cell of gameState.potentialSummonCells)rect(cell.col*cellWidth,CONFIG.TOP_UI_SPACE+cell.row*cellHeight,cellWidth,cellHeight);}
@@ -544,8 +658,14 @@ function drawGameUI(){
   if(!gameState.gameOver){
     // Draw player turn info on the left
     textAlign(LEFT,TOP);
-    text(`Player ${gameState.currentPlayerIsP1?'1 (Blue)':'2 (Red)'}'s Turn. M: ${gameState.movesMadeThisTurn}/${CONFIG.MAX_MOVES_PER_TURN}. A: ${gameState.attacksMadeThisTurn}/${CONFIG.MAX_ATTACKS_PER_TURN}`,10,topUiY);
-    text(`Mana: ${gameState.currentPlayerIsP1?gameState.player1Mana:gameState.player2Mana}`,width/2-150,topUiY);
+    text(`Player ${gameState.currentPlayerIsP1?'1 (Blue)':'2 (Red)'}'s Turn. Phase: ${gameState.currentPhase}`,10,topUiY);
+    // Display phase-specific action counts or general mana
+    if (gameState.currentPhase === PHASES.MOVE) {
+        text(`Units Moved: ${gameState.unitsMovedThisPhase.length}/3`, width/2-250, topUiY);
+    } else if (gameState.currentPhase === PHASES.ATTACK) {
+        text(`Units Attacked: ${gameState.unitsAttackedThisPhase.length}/3`, width/2-250, topUiY);
+    }
+    text(`Mana: ${gameState.currentPlayerIsP1?gameState.player1Mana:gameState.player2Mana}`,width/2-50,topUiY);
     
     // Draw battle results in top right with a background
     if(gameState.currentDiceRollResult && gameState.battleResultDisplayTimer > 0){
@@ -682,34 +802,91 @@ function refreshPotentialUnitActions(){if(!gameState.selectedUnit)return;gameSta
 function calculatePotentialSummonCells(){gameState.potentialSummonCells=[];if(!gameState.selectedCardForSummoning)return;let summonerUnit=gameState.units.find(u=>u.isSummoner&&u.isPlayer1===gameState.currentPlayerIsP1&&u.currentLifePoints>0);if(!summonerUnit)return;const adjacents=[[-1,0],[1,0],[0,-1],[0,1]];for(let adj of adjacents){let r=summonerUnit.row+adj[0];let c=summonerUnit.col+adj[1];if(isCellOnBoard(r,c)&&!getUnitAt(r,c))gameState.potentialSummonCells.push({row:r,col:c});}}
 function checkGameEndCondition(){let p1S=false;let p2S=false;for(let u of gameState.units){if(u.isSummoner){if(u.isPlayer1&&u.currentLifePoints>0)p1S=true;if(!u.isPlayer1&&u.currentLifePoints>0)p2S=true;}}if(!p1S){gameState.gameOver=true;gameState.winnerMessage="Game Over! Player 2 (Red) Wins!";actionButtonRect.text="Restart Game";deselectAllSelections();}else if(!p2S){gameState.gameOver=true;gameState.winnerMessage="Game Over! Player 1 (Blue) Wins!";actionButtonRect.text="Restart Game";deselectAllSelections();}}
 function endTurn(){
-  gameState.currentPlayerIsP1 = !gameState.currentPlayerIsP1;
-  gameState.movesMadeThisTurn = 0;
+  // Cost of Inaction: Add 1 damage to summoner if no enemy card was targeted during Attack Phase
+  if (gameState.currentPhase === PHASES.ATTACK && !gameState.hasTargetedEnemyThisTurn) {
+    let currentSummoner = gameState.units.find(u => u.isSummoner && u.isPlayer1 === gameState.currentPlayerIsP1);
+    if (currentSummoner) {
+      currentSummoner.takeDamage(1);
+      gameState.currentDiceRollResult = `${currentSummoner.name} takes 1 damage (Cost of Inaction).`;
+      gameState.battleResultDisplayTimer = CONFIG.BATTLE_RESULT_DISPLAY_TIME;
+      checkGameEndCondition(); // Check if this damage ended the game
+    }
+  }
+
+  // Reset for next phase or turn
+  gameState.movesMadeThisTurn = 0; // Reset general counters, though phase-specific ones are more important now
   gameState.attacksMadeThisTurn = 0;
+  gameState.unitsMovedThisPhase = [];
+  gameState.unitsAttackedThisPhase = [];
+  gameState.hasTargetedEnemyThisTurn = false;
   gameState.currentDiceRollResult = "";
   gameState.battleResultDisplayTimer = 0;
-  
-  // Reset unit states and restore any temporary ability effects
+
   for(let unit of gameState.units){
-    unit.hasMovedThisTurn = false;
-    unit.hasAttackedThisTurn = false;
-    
-    // Reset any temporary attack value modifications from Ice Arrows ability
+    unit.hasMovedThisTurn = false; // This flag is now per-unit, per-phase for movement
+    unit.hasAttackedThisTurn = false; // This flag is now per-unit, per-phase for attack
     if (unit.attackValue !== unit.originalAttackValue) {
       unit.attackValue = unit.originalAttackValue;
     }
   }
-  
-  drawNewCardForPlayer(gameState.currentPlayerIsP1);
   deselectAllSelections();
+
+  // Determine next phase or next player
+  let currentPhaseIndex = PHASE_ORDER.indexOf(gameState.currentPhase);
+  if (currentPhaseIndex === PHASE_ORDER.length - 1) { // If it was the Draw phase (last phase)
+    gameState.currentPlayerIsP1 = !gameState.currentPlayerIsP1;
+    gameState.currentPhase = PHASE_ORDER[0]; // Start with Summon phase for the next player
+    // Draw phase action (draw up to 5) happens before switching player in this new structure
+    let currentHand = gameState.currentPlayerIsP1 ? gameState.player1Hand : gameState.player2Hand; // Hand of the player whose turn just ended
+    const cardsToDraw = 5 - currentHand.length;
+    if (cardsToDraw > 0) {
+        for (let i = 0; i < cardsToDraw; i++) {
+            drawNewCardForPlayer(!gameState.currentPlayerIsP1); // Draw for the player whose turn it was
+        }
+    }
+  } else {
+    gameState.currentPhase = PHASE_ORDER[currentPhaseIndex + 1];
+  }
+  
+  actionButtonRect.text = `End ${gameState.currentPhase} Phase`;
+
+  // Specific phase start logic
+  if (gameState.currentPhase === PHASES.DRAW && currentPhaseIndex !== PHASE_ORDER.length -1 ) {
+    // This case should not be hit if logic is correct, draw happens at end of player's turn before switching
+  } else if (gameState.currentPhase === PHASES.SUMMON) {
+    // Reset per-turn summon limits if any
+  } else if (gameState.currentPhase === PHASES.MOVE) {
+    // Reset unit.hasMovedThisTurn for all units of the current player
+     for(let unit of gameState.units){
+        if(unit.isPlayer1 === gameState.currentPlayerIsP1){
+            unit.hasMovedThisTurn = false;
+        }
+    }
+  } else if (gameState.currentPhase === PHASES.ATTACK) {
+    // Reset unit.hasAttackedThisTurn for all units of the current player
+    for(let unit of gameState.units){
+        if(unit.isPlayer1 === gameState.currentPlayerIsP1){
+            unit.hasAttackedThisTurn = false;
+        }
+    }
+  }
 }
 
 function isMouseOverRect(mx,my,rect){return mx>rect.x&&mx<rect.x+rect.w&&my>rect.y&&my<rect.y+rect.h;}
-function isMouseOverAnyCardInHand(mx,my){let hand=gameState.currentPlayerIsP1?gameState.player1Hand:gameState.player2Hand;for(let card of hand){if(card.isMouseOver(mx,my))return true;}return false;}
-function handleActionButtonClick(){if(gameState.gameOver)resetGame();else endTurn();}
-function handleHandCardClick(mx,my){let currentHand=gameState.currentPlayerIsP1?gameState.player1Hand:gameState.player2Hand;for(let i=0;i<currentHand.length;i++){let card=currentHand[i];if(card.isMouseOver(mx,my)){if(cardActionMenu.active&&cardActionMenu.card&&cardActionMenu.card.id===card.id){}else if(gameState.selectedCardForSummoning&&gameState.selectedCardForSummoning.id===card.id){deselectAllSelections();cardActionMenu.open(card,i,card.displayX,card.displayY,card.displayWidth,card.displayHeight);}else{deselectAllSelections();cardActionMenu.open(card,i,card.displayX,card.displayY,card.displayWidth,card.displayHeight);}return true;}}return false;}
-function handleGridClick(mx,my,gridPos){let clickedUnitInstance=getUnitAt(gridPos.row,gridPos.col);if(gameState.selectedCardForSummoning){let placed=false;for(let cell of gameState.potentialSummonCells){if(cell.row===gridPos.row&&cell.col===gridPos.col){let newUnit=gameState.selectedCardForSummoning.createUnit(gridPos.row,gridPos.col,gameState.currentPlayerIsP1);gameState.units.push(newUnit);if(gameState.currentPlayerIsP1)gameState.player1Mana-=gameState.selectedCardForSummoning.summonCost;else gameState.player2Mana-=gameState.selectedCardForSummoning.summonCost;if(gameState.currentPlayerIsP1)gameState.player1Hand=gameState.player1Hand.filter(c=>c.id!==gameState.selectedCardForSummoning.id);else gameState.player2Hand=gameState.player2Hand.filter(c=>c.id!==gameState.selectedCardForSummoning.id);placed=true;break;}}deselectAllSelections();return true;}else if(gameState.selectedUnit){let actionPerformed=false;if(gameState.selectedUnit.canMoveNow()){for(let mC of gameState.potentialMoveCells){if(mC.row===gridPos.row&&mC.col===gridPos.col){gameState.selectedUnit.moveTo(gridPos.row,gridPos.col);actionPerformed=true;break;}}}if(!actionPerformed&&gameState.selectedUnit.canAttackNow()){for(let aC of gameState.potentialAttackCells){if(aC.row===gridPos.row&&aC.col===gridPos.col){let tU=getUnitAt(aC.row,aC.col);if(tU&&tU.isPlayer1!==gameState.selectedUnit.isPlayer1){gameState.selectedUnit.attack(tU);actionPerformed=true;}break;}}}if(actionPerformed){if(!gameState.selectedUnit.canMoveNow()&&!gameState.selectedUnit.canAttackNow())deselectAllSelections();else refreshPotentialUnitActions();}else{if(clickedUnitInstance&&clickedUnitInstance.isPlayer1===gameState.currentPlayerIsP1)selectUnitForAction(clickedUnitInstance);else deselectAllSelections();}return true;}else{if(clickedUnitInstance&&clickedUnitInstance.isPlayer1===gameState.currentPlayerIsP1){if(clickedUnitInstance.canMoveNow()||clickedUnitInstance.canAttackNow())selectUnitForAction(clickedUnitInstance);}else{deselectAllSelections();}return true;}}
 
-function mousePressed(){if(mouseButton!==LEFT)return;if(isMouseOverRect(mouseX,mouseY,actionButtonRect)){handleActionButtonClick();return;}if(gameState.gameOver)return;if(cardActionMenu.active){if(cardActionMenu.handleMousePress(mouseX,mouseY))return;}if(handleHandCardClick(mouseX,mouseY))return;if(cardActionMenu.active&&!isMouseOverAnyCardInHand(mouseX,mouseY)){deselectAllSelections();}let gridPos=pixelToGrid(mouseX,mouseY);if(gridPos){handleGridClick(mouseX,mouseY,gridPos);return;}if(!cardActionMenu.active){deselectAllSelections();}}
+function handleActionButtonClick(){if(gameState.gameOver)resetGame();else endTurn();}
+
+function handleHandCardClick(mx,my){if(gameState.gameOver)return false;let currentHand=gameState.currentPlayerIsP1?gameState.player1Hand:gameState.player2Hand;for(let i=0;i<currentHand.length;i++){let card=currentHand[i];if(card.isMouseOver(mx,my)){if(cardActionMenu.active&&cardActionMenu.card&&cardActionMenu.card.id===card.id){/* Already open for this card, do nothing or close? For now, nothing. */}else if(gameState.selectedCardForSummoning&&gameState.selectedCardForSummoning.id===card.id){deselectAllSelections(); // Clicking selected card again deselects it and closes menu
+cardActionMenu.open(card,i,card.displayX,card.displayY,card.displayWidth,card.displayHeight);}else{deselectAllSelections();cardActionMenu.open(card,i,card.displayX,card.displayY,card.displayWidth,card.displayHeight);}return true;}}return false;}
+
+function handleGridClick(mx,my,gridPos){let clickedUnitInstance=getUnitAt(gridPos.row,gridPos.col);if(gameState.selectedCardForSummoning){if (gameState.currentPhase === PHASES.SUMMON || gameState.currentPhase === PHASES.BUILD) { // Allow summoning/building in respective phases
+let placed=false;for(let cell of gameState.potentialSummonCells){if(cell.row===gridPos.row&&cell.col===gridPos.col){let newUnit=gameState.selectedCardForSummoning.createUnit(gridPos.row,gridPos.col,gameState.currentPlayerIsP1);if(newUnit){ // createUnit returns null for Event cards
+gameState.units.push(newUnit);if(gameState.currentPlayerIsP1)gameState.player1Mana-=gameState.selectedCardForSummoning.summonCost;else gameState.player2Mana-=gameState.selectedCardForSummoning.summonCost;if(gameState.currentPlayerIsP1)gameState.player1Hand=gameState.player1Hand.filter(c=>c.id!==gameState.selectedCardForSummoning.id);else gameState.player2Hand=gameState.player2Hand.filter(c=>c.id!==gameState.selectedCardForSummoning.id);placed=true;break;}}else{console.log("Cannot play event card by clicking grid. Event cards are played from hand menu.");}}deselectAllSelections();return true;}} else if(gameState.selectedUnit){let actionPerformed=false;if(gameState.currentPhase === PHASES.MOVE && gameState.selectedUnit.canMoveNow() && gameState.unitsMovedThisPhase.length < 3 && !gameState.unitsMovedThisPhase.includes(gameState.selectedUnit.id)){for(let mC of gameState.potentialMoveCells){if(mC.row===gridPos.row&&mC.col===gridPos.col){gameState.selectedUnit.moveTo(gridPos.row,gridPos.col);actionPerformed=true;break;}}}if(!actionPerformed && gameState.currentPhase === PHASES.ATTACK && gameState.selectedUnit.canAttackNow() && gameState.unitsAttackedThisPhase.length < 3 && !gameState.unitsAttackedThisPhase.includes(gameState.selectedUnit.id)){for(let aC of gameState.potentialAttackCells){if(aC.row===gridPos.row&&aC.col===gridPos.col){let tU=getUnitAt(aC.row,aC.col);if(tU&&tU.isPlayer1!==gameState.selectedUnit.isPlayer1){gameState.selectedUnit.attack(tU);actionPerformed=true;}break;}}}if(actionPerformed){let canStillAct = false;if (gameState.currentPhase === PHASES.MOVE && gameState.selectedUnit.canMoveNow() && gameState.unitsMovedThisPhase.length < 3 && !gameState.unitsMovedThisPhase.includes(gameState.selectedUnit.id)) {canStillAct = true;}if (gameState.currentPhase === PHASES.ATTACK && gameState.selectedUnit.canAttackNow() && gameState.unitsAttackedThisPhase.length < 3 && !gameState.unitsAttackedThisPhase.includes(gameState.selectedUnit.id)) {canStillAct = true;}if(!canStillAct) deselectAllSelections();else refreshPotentialUnitActions();}else{if(clickedUnitInstance&&clickedUnitInstance.isPlayer1===gameState.currentPlayerIsP1)selectUnitForAction(clickedUnitInstance);else deselectAllSelections();}return true;}else{if(clickedUnitInstance&&clickedUnitInstance.isPlayer1===gameState.currentPlayerIsP1){if((gameState.currentPhase === PHASES.MOVE && clickedUnitInstance.canMoveNow() && gameState.unitsMovedThisPhase.length < 3 && !gameState.unitsMovedThisPhase.includes(clickedUnitInstance.id)) || (gameState.currentPhase === PHASES.ATTACK && clickedUnitInstance.canAttackNow() && gameState.unitsAttackedThisPhase.length < 3 && !gameState.unitsAttackedThisPhase.includes(clickedUnitInstance.id)))selectUnitForAction(clickedUnitInstance);}else{deselectAllSelections();}return true;}}
+
+function mousePressed(){if(mouseButton!==LEFT)return;if(isMouseOverRect(mouseX,mouseY,actionButtonRect)){handleActionButtonClick();return;}if(gameState.gameOver)return;if(cardActionMenu.active){if(cardActionMenu.handleMousePress(mouseX,mouseY))return;}if(handleHandCardClick(mouseX,mouseY))return;let gridPos=pixelToGrid(mouseX,mouseY);if(gridPos){handleGridClick(mouseX,mouseY,gridPos);return;}if(!cardActionMenu.active && !isMouseOverRect(mouseX, mouseY, cardActionMenu.playButtonRect) && !isMouseOverRect(mouseX, mouseY, cardActionMenu.scrapButtonRect)){ // Ensure not clicking menu buttons
+    deselectAllSelections();
+}}
+
 function windowResized(){/* Not dynamically used */}
 
 // Helper function to draw a star for ability indicators
