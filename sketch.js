@@ -81,11 +81,46 @@ class CardActionMenuManager {
     }
     close() { this.active = false; this.card = null; this.cardIndexInHand = -1; }
     draw() {
-        if (!this.active || !this.card) return; push();
-        fill(120,70,80); rect(this.playButtonRect.x,this.playButtonRect.y,this.playButtonRect.w,this.playButtonRect.h,3);
-        fill(0);textAlign(CENTER,CENTER);textSize(10);text(this.playButtonRect.text,this.playButtonRect.x+this.playButtonRect.w/2,this.playButtonRect.y+this.playButtonRect.h/2);
-        fill(20,70,80); rect(this.scrapButtonRect.x,this.scrapButtonRect.y,this.scrapButtonRect.w,this.scrapButtonRect.h,3);
-        fill(0);text(this.scrapButtonRect.text,this.scrapButtonRect.x+this.scrapButtonRect.w/2,this.scrapButtonRect.y+this.scrapButtonRect.h/2); pop();
+        if (!this.active || !this.card) return;
+        push();
+        const phase = gameState.currentPhase;
+        const isMagicPhase = (phase === PHASES.MAGIC);
+        const isSummonPhase = (phase === PHASES.SUMMON);
+        const isEventCard = (this.card.unitType === "Event");
+        // Determine if Play button should be shown
+        let showPlay = false;
+        if (isEventCard) {
+            // Event cards only playable in their listed phase
+            showPlay = (phase === this.card.specialAbility.phase);
+        } else {
+            // Unit cards playable only in Summon phase
+            showPlay = isSummonPhase;
+        }
+        // Determine if Scrap button should be shown
+        const showScrap = isMagicPhase;
+
+        // Draw Play button if allowed
+        if (showPlay) {
+            fill(120,70,80);
+            rect(this.playButtonRect.x, this.playButtonRect.y, this.playButtonRect.w, this.playButtonRect.h, 3);
+            fill(0);
+            textAlign(CENTER, CENTER);
+            textSize(10);
+            text(this.playButtonRect.text,
+                 this.playButtonRect.x + this.playButtonRect.w/2,
+                 this.playButtonRect.y + this.playButtonRect.h/2);
+        }
+        // Draw Scrap button if allowed
+        if (showScrap) {
+            fill(20,70,80);
+            rect(this.scrapButtonRect.x, this.scrapButtonRect.y, this.scrapButtonRect.w, this.scrapButtonRect.h, 3);
+            fill(0);
+            textAlign(CENTER, CENTER);
+            text(this.scrapButtonRect.text,
+                 this.scrapButtonRect.x + this.scrapButtonRect.w/2,
+                 this.scrapButtonRect.y + this.scrapButtonRect.h/2);
+        }
+        pop();
     }
     handleMousePress(mx, my) {
         if (!this.active) return false;
@@ -577,18 +612,18 @@ function populateAllAvailableCards(){
     new Card("Fire Drake", "Brute", 4, 10, 'ranged', 8, false, { type: "FIRE_DRAKE_ABILITIES", protector: true, fire_breath: true }),
     new Card("Holleas", "Archer", 3, 7, 'ranged', 5, false, { type: "HOLLEAS_ABILITIES", fiery_summon: true, ignite: true }),
     // Phoenix Elves Event Cards
-    new Card("Blinding Flare", "Event", null, null, null, 2, false, {
+    new Card("Blinding Flare", "Event", null, null, null, 1, false, {
       type: "BLINDING_FLARE_EFFECT",
       phase: PHASES.MAGIC,
       active: true,
       text: "When your summoner or a friendly unit adjacent to your summoner is being attacked, add 1 damage to it for each shield rolled, instead of each sword or bow rolled."
     }),
-    new Card("Burn", "Event", null, null, null, 1, false, {
+    new Card("Burn", "Event", null, null, null, 0, false, {
       type: "BURN_EFFECT",
       phase: PHASES.MOVE,
       text: "Target a common or champion within 2 spaces of your summoner. Add 2 damage to the target."
     }),
-    new Card("Divine Retribution", "Event", null, null, null, 3, false, {
+    new Card("Divine Retribution", "Event", null, null, null, 0, false, {
       type: "DIVINE_RETRIBUTUTION_EFFECT",
       phase: PHASES.MAGIC,
       active: true,
